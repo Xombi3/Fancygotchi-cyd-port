@@ -13,8 +13,10 @@
  *   - Shows pwnagotchi-style face, mood and live stats on screen
  *
  * Touch zones:
- *   Top half    = cycle theme
- *   Bottom-right = toggle SD capture on/off
+ *   Top-LEFT    = cycle theme
+ *   Top-RIGHT   = cycle face pack
+ *   Bottom-LEFT = toggle web UI (http://192.168.4.1)
+ *   Bottom-RIGHT= toggle deauth on/off
  *
  * After capture, crack offline on PC:
  *   hcxpcapngtool -o hash.hc22000 /handshakes/*.pcap
@@ -34,6 +36,8 @@
 
 #include "config.h"
 #include "theme.h"
+#include "faces.h"
+#include "font.h"
 #include "sd_pcap.h"
 #include "wifi_capture.h"
 #include "touch_calibrate.h"
@@ -69,8 +73,8 @@
 #define STATUS_Y   (TOPBAR_H + 55)
 #define MOOD_Y     (TOPBAR_H + 85)
 #define BARS_Y     (TOPBAR_H + 99)
-#define BAR_X       34
-#define BAR_W      156
+#define BAR_X       20
+#define BAR_W      172
 #define BAR_H        7
 #define BAR_SP      14
 
@@ -94,13 +98,8 @@ bool redrawAll = true;
 enum Mood { MOOD_IDLE, MOOD_SCANNING, MOOD_EXCITED, MOOD_HAPPY,
             MOOD_INTENSE, MOOD_BORED, MOOD_SLEEP };
 
-static const char* FACES_IDLE[]     = { "(^‿‿^)", "( -_-)", "(= =)" };
-static const char* FACES_SCAN[]     = { "(°▃▃°)", "( ⊙ ‿ ⊙)", "(^‿‿^)" };
-static const char* FACES_EXCITED[]  = { "(ᵔ◡◡ᵔ)", "(✜‿‿✜)", "(ᵔ◡ᵔ)" };
-static const char* FACES_HAPPY[]    = { "(◕‿‿◕)", "(^‿‿^)", "( ◕◡◕)" };
-static const char* FACES_INTENSE[]  = { "(°▃▃°)", "(⚆_⚆)", "( ☉_☉)" };
-static const char* FACES_BORED[]    = { "(-__-)", "(ب__ب)", "(-_-)" };
-static const char* FACES_SLEEP[]    = { "(⇀‿‿↼)", "( -.- )", "(-zzz-)" };
+// Face arrays live in faces.h — edit or add packs there.
+// Switch packs at runtime: tap TOP-RIGHT on screen.
 
 static const char* MOODS_STR[] = {
   "idle", "scanning", "excited!", "happy", "intense", "bored", "sleepy"
@@ -134,6 +133,7 @@ uint32_t dPwned=0xFFFFFFFF, dPkts=0xFFFFFFFF, dCh=0xFFFFFFFF;
 bool     dSdReady    = false;
 char     dSdStatus[32] = "";
 uint8_t  dTheme=0xFF;
+uint8_t  dFaceSet=0xFF;
 
 // Touch debounce
 uint32_t lastTouchMs = 0;
@@ -186,14 +186,14 @@ void updateMood() {
 
     const char** faces;
     switch (currentMood) {
-      case MOOD_IDLE:     faces = FACES_IDLE;    break;
-      case MOOD_SCANNING: faces = FACES_SCAN;    break;
-      case MOOD_EXCITED:  faces = FACES_EXCITED; break;
-      case MOOD_HAPPY:    faces = FACES_HAPPY;   break;
-      case MOOD_INTENSE:  faces = FACES_INTENSE; break;
-      case MOOD_BORED:    faces = FACES_BORED;   break;
-      case MOOD_SLEEP:    faces = FACES_SLEEP;   break;
-      default:            faces = FACES_SCAN;    break;
+      case MOOD_IDLE:     faces = (const char**)activeFaceSet()->idle;    break;
+      case MOOD_SCANNING: faces = (const char**)activeFaceSet()->scan;    break;
+      case MOOD_EXCITED:  faces = (const char**)activeFaceSet()->excited; break;
+      case MOOD_HAPPY:    faces = (const char**)activeFaceSet()->happy;   break;
+      case MOOD_INTENSE:  faces = (const char**)activeFaceSet()->intense; break;
+      case MOOD_BORED:    faces = (const char**)activeFaceSet()->bored;   break;
+      case MOOD_SLEEP:    faces = (const char**)activeFaceSet()->sleep;   break;
+      default:            faces = (const char**)activeFaceSet()->scan;    break;
     }
     strlcpy(displayFace,  faces[moodFrameIdx],               sizeof(displayFace));
     strlcpy(displayStatus,STATUS_MSGS[currentMood][moodFrameIdx], sizeof(displayStatus));
@@ -236,7 +236,7 @@ void drawChrome() {
   // Top bar
   tft.fillRect(0,0,SCR_W,TOPBAR_H,c.panel);
   tft.drawFastHLine(0,TOPBAR_H,SCR_W,c.accent);
-  tft.setTextFont(2); tft.setTextSize(1); tft.setTextDatum(TL_DATUM);
+  tft.setTextFont(FONT_TOPBAR); tft.setTextSize(FONT_TOPBAR_SIZE); tft.setTextDatum(TL_DATUM);
   tft.setTextColor(c.accent,c.panel);
   tft.drawString("FancyGotchi",4,4);
   tft.setTextColor(c.ok,c.panel);
@@ -247,7 +247,7 @@ void drawChrome() {
   tft.fillRect(DIVIDER_X+1,TOPBAR_H+1,SCR_W-DIVIDER_X-1,BOTBAR_Y-TOPBAR_H-1,c.panel);
 
   // Widget labels
-  tft.setTextFont(2); tft.setTextSize(1); tft.setTextDatum(TL_DATUM);
+  tft.setTextFont(FONT_STATS); tft.setTextSize(FONT_STATS_SIZE); tft.setTextDatum(TL_DATUM);
   tft.setTextColor(c.textDim,c.panel);
   tft.drawString("APs",   WID_X, WID_Y);
   tft.drawString("EAPOL", WID_X, WID_Y+WID_SP);
@@ -255,16 +255,18 @@ void drawChrome() {
   tft.drawString("Pwned", WID_X, WID_Y+WID_SP*3);
   int16_t dY = WID_Y+WID_SP*4+2;
   tft.drawFastHLine(WID_X,dY,SCR_W-WID_X-2,c.accent);
-  tft.setTextFont(1); tft.setTextDatum(TC_DATUM);
+  tft.setTextFont(FONT_LABEL); tft.setTextDatum(TC_DATUM);
   tft.setTextColor(c.accent,c.panel);
-  char tb[20]; snprintf(tb,20,"<%s>",activeThemeName());
+  char tb[22]; snprintf(tb,22,"<%s>",activeThemeName());
   tft.drawString(tb,(DIVIDER_X+SCR_W)/2,dY+4);
+  char fb[22]; snprintf(fb,22,"{%s}",activeFaceSetName());
+  tft.drawString(fb,(DIVIDER_X+SCR_W)/2,dY+13);
   tft.setTextColor(c.textDim,c.panel);
-  tft.drawString("< theme",         (DIVIDER_X+SCR_W)/2, dY+13);
-  tft.drawString("> deauth | < web",(DIVIDER_X+SCR_W)/2, dY+24);
+  tft.drawString("^L:theme ^R:face",  (DIVIDER_X+SCR_W)/2, dY+22);
+  tft.drawString("vL:web   vR:deauth",(DIVIDER_X+SCR_W)/2, dY+31);
 
   // Mood bar labels
-  tft.setTextFont(1); tft.setTextSize(1); tft.setTextDatum(TR_DATUM);
+  tft.setTextFont(FONT_LABEL); tft.setTextSize(FONT_LABEL_SIZE); tft.setTextDatum(TR_DATUM);
   tft.setTextColor(c.textDim,c.bg);
   tft.drawString("exc",BAR_X-2,BARS_Y);
   tft.drawString("brd",BAR_X-2,BARS_Y+BAR_SP);
@@ -274,7 +276,7 @@ void drawChrome() {
   // Bottom bar
   tft.fillRect(0,BOTBAR_Y,SCR_W,SCR_H-BOTBAR_Y,c.panel);
   tft.drawFastHLine(0,BOTBAR_Y,SCR_W,c.accent);
-  tft.setTextFont(1); tft.setTextDatum(TL_DATUM);
+  tft.setTextFont(FONT_BOTBAR); tft.setTextDatum(TL_DATUM);
   tft.setTextColor(c.textDim,c.panel);
   tft.drawString("pkts:",4,BOTBAR_Y+4);
   tft.setTextDatum(TR_DATUM); tft.setTextColor(c.textDim,c.panel);
@@ -319,7 +321,7 @@ void updateDynamic() {
     faceSpr.fillSprite(c.bg);
     faceSpr.setTextDatum(MC_DATUM);
     faceSpr.setTextColor(c.face, c.bg);
-    faceSpr.setTextSize(2); faceSpr.setTextFont(2);
+    faceSpr.setTextSize(FONT_FACE_SIZE); faceSpr.setTextFont(FONT_FACE);
     faceSpr.drawString(displayFace, FACE_SPR_W/2, FACE_SPR_H/2);
     faceSpr.pushSprite(FACE_SPR_X, FACE_SPR_Y);
   }
@@ -328,7 +330,7 @@ void updateDynamic() {
   if (strcmp(displayStatus, dStatus) != 0) {
     strlcpy(dStatus, displayStatus, sizeof(dStatus));
     FIELD(0, STATUS_Y, DIVIDER_X, 18, c.bg);
-    tft.setTextFont(2); tft.setTextSize(1);
+    tft.setTextFont(FONT_STATUS); tft.setTextSize(FONT_STATUS_SIZE);
     tft.setTextDatum(TC_DATUM); tft.setTextColor(c.text, c.bg);
     tft.drawString(displayStatus, FACE_CX, STATUS_Y);
   }
@@ -337,7 +339,7 @@ void updateDynamic() {
   if (strcmp(displayMood, dMood) != 0) {
     strlcpy(dMood, displayMood, sizeof(dMood));
     FIELD(0, MOOD_Y, DIVIDER_X, 10, c.bg);
-    tft.setTextFont(1); tft.setTextDatum(TC_DATUM);
+    tft.setTextFont(FONT_MOOD); tft.setTextDatum(TC_DATUM);
     tft.setTextColor(c.textDim, c.bg);
     char buf[28]; snprintf(buf, 28, "mood: %s", displayMood);
     tft.drawString(buf, FACE_CX, MOOD_Y);
@@ -361,8 +363,8 @@ void updateDynamic() {
   auto wnum = [&](uint32_t v, uint32_t& cache, int16_t y, uint16_t col) {
     if (v == cache) return;
     cache = v;
-    FIELD(WID_X+32, y, SCR_W-WID_X-34, 15, c.panel);
-    tft.setTextFont(2); tft.setTextSize(1);
+    FIELD(WID_X+32, y, SCR_W-WID_X-32, 15, c.panel);
+    tft.setTextFont(FONT_STATS); tft.setTextSize(FONT_STATS_SIZE);
     tft.setTextDatum(TR_DATUM); tft.setTextColor(col, c.panel);
     char buf[12]; snprintf(buf, 12, "%lu", v);
     tft.drawString(buf, SCR_W-4, y);
@@ -377,7 +379,7 @@ void updateDynamic() {
   if (ch != dCh) {
     dCh = ch;
     FIELD(152, 4, 100, 14, c.panel);
-    tft.setTextFont(2); tft.setTextSize(1);
+    tft.setTextFont(FONT_STATS); tft.setTextSize(FONT_STATS_SIZE);
     tft.setTextDatum(TL_DATUM); tft.setTextColor(c.textDim, c.panel);
     char buf[20]; snprintf(buf, 20, "CH:%02d D:%lu", ch, captureDeauth()%1000);
     tft.drawString(buf, 154, 4);
@@ -388,7 +390,7 @@ void updateDynamic() {
   if (pkts != dPkts) {
     dPkts = pkts;
     FIELD(30, BB_Y+3, 110, 11, c.panel);
-    tft.setTextFont(1); tft.setTextDatum(TL_DATUM);
+    tft.setTextFont(FONT_BOTBAR); tft.setTextDatum(TL_DATUM);
     tft.setTextColor(c.textDim, c.panel);
     char buf[16]; snprintf(buf, 16, "%lu", pkts);
     tft.drawString(buf, 32, BB_Y+5);
@@ -398,7 +400,7 @@ void updateDynamic() {
   if (strcmp(ss, dSdStatus) != 0) {
     strlcpy(dSdStatus, ss, sizeof(dSdStatus));
     FIELD(138, BB_Y+2, SCR_W-142, 13, c.panel);
-    tft.setTextFont(1); tft.setTextDatum(TC_DATUM);
+    tft.setTextFont(FONT_LABEL); tft.setTextDatum(TC_DATUM);
     tft.setTextColor(sdIsReady() ? c.ok : c.err, c.panel);
     tft.drawString(ss, (138+SCR_W)/2, BB_Y+5);
   }
@@ -432,8 +434,14 @@ void handleTouch() {
   touchMap(p.x,p.y,sx,sy,SCR_W,SCR_H);
   Serial.printf("[Touch] raw(%d,%d) z=%d -> screen(%d,%d)\n",p.x,p.y,p.z,sx,sy);
   if (sy < SCR_H/2) {
-    themeCycleNext(); redrawAll=true;
-    Serial.printf("[Touch] Theme: %s\n",activeThemeName());
+    if (sx < SCR_W/2) {
+      themeCycleNext(); redrawAll=true;
+      Serial.printf("[Touch] Theme: %s\n",activeThemeName());
+    } else {
+      faceSetCycleNext(); redrawAll=true;
+      dFace[0]='\0';
+      Serial.printf("[Touch] Face pack: %s\n",activeFaceSetName());
+    }
   } else if (sx < SCR_W/2) {
     // Bottom-LEFT: toggle web UI
     if (webUiIsActive()) webUiStop();
@@ -469,12 +477,12 @@ void setup() {
   Serial.println("[boot] TFT ok");
 
   // Splash
-  tft.setTextFont(4); tft.setTextDatum(MC_DATUM);
+  tft.setTextFont(FONT_SPLASH_TITLE); tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_CYAN,TFT_BLACK);
   tft.drawString("FancyGotchi",SCR_W/2,80);
-  tft.setTextFont(2); tft.setTextColor(TFT_DARKGREY,TFT_BLACK);
+  tft.setTextFont(FONT_SPLASH_SUB); tft.setTextColor(TFT_DARKGREY,TFT_BLACK);
   tft.drawString("Standalone Capture Device",SCR_W/2,110);
-  tft.setTextFont(1); tft.setTextColor(TFT_YELLOW,TFT_BLACK);
+  tft.setTextFont(FONT_SPLASH_HINT); tft.setTextColor(TFT_YELLOW,TFT_BLACK);
   tft.drawString("Hold screen to calibrate touch",SCR_W/2,134);
   tft.setTextColor(0x4208,TFT_BLACK);
   tft.drawString("Release to skip  (3 seconds)",SCR_W/2,146);
@@ -527,7 +535,7 @@ void setup() {
   themeInit();
 
   bootTime=millis();
-  redrawAll=true; dTheme=0xFF;
+  redrawAll=true; dTheme=0xFF; dFaceSet=0xFF;
   lastDraw=0; lastAnim=0;
 
   ledRGB(false,false,false);
@@ -573,6 +581,7 @@ void loop() {
   for(uint8_t i=0;i<THEME_COUNT;i++)
     if(THEMES[i].name==activeThemeName()){ti=i;break;}
   if(ti!=dTheme){dTheme=ti;redrawAll=true;}
+  if(activeFaceSetIdx()!=dFaceSet){dFaceSet=activeFaceSetIdx();redrawAll=true;}
 
   // Mood + animation
   if (now-lastAnim>=ANIM_FRAME_MS) {
