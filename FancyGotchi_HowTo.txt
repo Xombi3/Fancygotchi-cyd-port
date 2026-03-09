@@ -191,3 +191,9 @@ STEP 4 — Done. Changes take effect on boot.
   touch_calibrate.h     do not edit
 
 ================================================
+
+Download Press Start 2P from fonts.google.com/specimen/Press+Start+2P
+Install Processing from processing.org/download
+Find Create_font.pde in your TFT_eSPI library folder under Tools/Create_Smooth_Font/Create_font/
+Drop the TTF in the same folder, set fontSize = 28, hit Run
+Rename the output to pwna_face.vlw and drop it in your sketch's data/ folder
