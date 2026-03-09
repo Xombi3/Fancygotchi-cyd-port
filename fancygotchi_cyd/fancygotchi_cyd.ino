@@ -360,7 +360,6 @@ void updateDynamic() {
   }
 
   // ── Right panel numbers ───────────────────────────────────────
-  // Option A: clear dynamically after the label width so we never erase the label (e.g. "Pwned")
   // Clear dynamically after the label width so we never erase the label (e.g. "Pwned")
   tft.setTextFont(FONT_STATS);
   tft.setTextSize(FONT_STATS_SIZE);
