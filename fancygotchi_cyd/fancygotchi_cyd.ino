@@ -360,19 +360,36 @@ void updateDynamic() {
   }
 
   // ── Right panel numbers ───────────────────────────────────────
-  auto wnum = [&](uint32_t v, uint32_t& cache, int16_t y, uint16_t col) {
+  // Option A: clear dynamically after the label width so we never erase the label (e.g. "Pwned")
+  // Clear dynamically after the label width so we never erase the label (e.g. "Pwned")
+  tft.setTextFont(FONT_STATS);
+  tft.setTextSize(FONT_STATS_SIZE);
+
+  auto wnum = [&](const char* label, uint32_t v, uint32_t& cache, int16_t y, uint16_t col) {
     if (v == cache) return;
     cache = v;
-    FIELD(WID_X+32, y, SCR_W-WID_X-32, 15, c.panel);
-    tft.setTextFont(FONT_STATS); tft.setTextSize(FONT_STATS_SIZE);
-    tft.setTextDatum(TR_DATUM); tft.setTextColor(col, c.panel);
+
+    // Compute where the label ends (in the current font/size) and clear after it.
+    int16_t labelW = tft.textWidth(label);
+    int16_t x0 = WID_X + labelW + 6;     // padding after label
+    int16_t xMin = WID_X + 32;           // keep previous minimum gap
+    if (x0 < xMin) x0 = xMin;
+
+    int16_t w = SCR_W - x0 - 1;          // 1px safety at right edge
+    if (w < 1) w = 1;
+
+    FIELD(x0, y, w, 15, c.panel);
+
+    tft.setTextDatum(TR_DATUM);
+    tft.setTextColor(col, c.panel);
     char buf[12]; snprintf(buf, 12, "%lu", v);
     tft.drawString(buf, SCR_W-4, y);
   };
-  wnum(captureApCount(), dAPs,   WID_Y,          c.text);
-  wnum(captureEapol(),   dEapol, WID_Y+WID_SP,   captureEapol()>0  ? c.ok     : c.text);
-  wnum(capturePmkid(),   dPmkid, WID_Y+WID_SP*2, capturePmkid()>0  ? c.ok     : c.text);
-  wnum(capturePwned(),   dPwned, WID_Y+WID_SP*3, capturePwned()>0  ? c.accent : c.text);
+
+  wnum("APs",   captureApCount(), dAPs,   WID_Y,          c.text);
+  wnum("EAPOL", captureEapol(),   dEapol, WID_Y+WID_SP,   captureEapol()>0  ? c.ok     : c.text);
+  wnum("PMKID", capturePmkid(),   dPmkid, WID_Y+WID_SP*2, capturePmkid()>0  ? c.ok     : c.text);
+  wnum("Pwned", capturePwned(),   dPwned, WID_Y+WID_SP*3, capturePwned()>0  ? c.accent : c.text);
 
   // ── Top bar: channel + deauth ─────────────────────────────────
   uint32_t ch = captureChannel();
