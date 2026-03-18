@@ -1,3 +1,4 @@
+(^‿‿^)
 FancyGotchi CYD  — Standalone WiFi Capture Device
 
 A standalone pwnagotchi-style WiFi handshake capture device for the
